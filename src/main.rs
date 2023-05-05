@@ -3,49 +3,54 @@ use rand::prelude::*;
 use std::cell::RefCell;
 use std::fs::create_dir;
 use std::io::{Read, Result};
-use std::ops::{DerefMut, Range};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use clap::Parser;
 
-struct BinRead<'a> {
-    rng: &'a RefCell<SmallRng>,
+struct BinRead {
+    rng: SmallRng,
     len: usize,
 }
 
-impl<'a> BinRead<'a> {
-    fn new(rng: &'a RefCell<SmallRng>, len: usize) -> Self {
-        Self { rng, len }
+impl BinRead {
+    fn new(seed: u64, len: usize) -> Self {
+        Self {
+            rng: SmallRng::seed_from_u64(seed),
+            len,
+        }
     }
 }
 
-impl Read for BinRead<'_> {
+impl Read for BinRead {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         let to_read_len = std::cmp::min(buf.len(), self.len);
-        self.rng.borrow_mut().fill_bytes(&mut buf[..to_read_len]);
+        self.rng.fill_bytes(&mut buf[..to_read_len]);
         self.len -= to_read_len;
         Ok(to_read_len)
     }
 }
 
-struct TextRead<'a> {
-    rng: &'a RefCell<SmallRng>,
+struct TextRead {
+    rng: SmallRng,
     len: usize,
 }
 
-impl<'a> TextRead<'a> {
-    fn new(rng: &'a RefCell<SmallRng>, len: usize) -> Self {
-        Self { rng, len }
+impl TextRead {
+    fn new(seed: u64, len: usize) -> Self {
+        Self {
+            rng: SmallRng::seed_from_u64(seed),
+            len,
+        }
     }
 }
 
-impl Read for TextRead<'_> {
+impl Read for TextRead {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         // let's say that means words len is height
         let mut words_to_generate = std::cmp::min(buf.len() >> 3, self.len);
-        let string =
-            lipsum::lipsum_words_with_rng(self.rng.borrow_mut().deref_mut(), words_to_generate);
+        let string = lipsum::lipsum_words_with_rng(&mut self.rng, words_to_generate);
         let mut source_len = string.len();
         loop {
             match string[0..source_len].rfind(' ') {
@@ -65,10 +70,11 @@ impl Read for TextRead<'_> {
     }
 }
 
+#[derive(Debug)]
 struct Context {
     pub dir_depth: Range<u64>,
-    pub dir_child: Range<u64>,
-    pub ratio_dir: f32,
+    pub nb_dir_child: Range<u64>,
+    pub nb_file_child: Range<u64>,
     pub binary_ratio: f32,
     pub file_len: Range<usize>,
     pub rng: Rc<RefCell<SmallRng>>,
@@ -76,15 +82,14 @@ struct Context {
 
 impl Context {
     fn nb_child(&self) -> (u64, u64) {
-        let nb_child = self.rng.borrow_mut().gen_range(self.dir_child.clone());
+        let nb_files = self.rng.borrow_mut().gen_range(self.nb_file_child.clone());
         let can_contains_dir = self.rng.borrow_mut().gen_range(self.dir_depth.clone());
         let nb_dir = if can_contains_dir > 0 {
-            (nb_child as f32 * self.ratio_dir) as u64
+            self.rng.borrow_mut().gen_range(self.nb_dir_child.clone())
         } else {
             0
         };
-        println!("{nb_child} -> {nb_dir}");
-        (nb_child - nb_dir, nb_dir)
+        (nb_files, nb_dir)
     }
 
     fn is_binary(&self) -> bool {
@@ -111,7 +116,8 @@ impl Context {
         let rng = Rc::clone(&self.rng);
         Self {
             dir_depth,
-            dir_child: self.dir_child.clone(),
+            nb_dir_child: self.nb_dir_child.clone(),
+            nb_file_child: self.nb_file_child.clone(),
             file_len: self.file_len.clone(),
             rng,
             ..*self
@@ -119,19 +125,19 @@ impl Context {
     }
 
     fn binary_read(&self, len: usize) -> BinRead {
-        BinRead::new(&self.rng, len)
+        BinRead::new(self.rng.borrow_mut().gen(), len)
     }
 
     fn text_read(&self, len: usize) -> TextRead {
-        TextRead::new(&self.rng, len)
+        TextRead::new(self.rng.borrow_mut().gen(), len)
     }
 }
 
 struct ContextBuilder {
     seed: u64,
     dir_depth: Range<u64>,
-    dir_child: Range<u64>,
-    ratio_dir: f32,
+    nb_dir_child: Range<u64>,
+    nb_file_child: Range<u64>,
     binary_ratio: f32,
     file_len: Range<usize>,
 }
@@ -141,11 +147,16 @@ impl ContextBuilder {
         Self {
             seed: 0,
             dir_depth: 4..6,
-            dir_child: 5..15,
-            ratio_dir: 0.2,
+            nb_dir_child: 0..5,
+            nb_file_child: 0..10,
             binary_ratio: 0.2,
             file_len: 10..1_000_000,
         }
+    }
+
+    fn seed(&mut self, seed: u64) -> &mut Self {
+        self.seed = seed;
+        self
     }
 
     fn dir_depth(&mut self, dir_depth: Range<u64>) -> &mut Self {
@@ -153,13 +164,13 @@ impl ContextBuilder {
         self
     }
 
-    fn dir_child(&mut self, dir_child: Range<u64>) -> &mut Self {
-        self.dir_child = dir_child;
+    fn nb_dir_child(&mut self, nb_dir_child: Range<u64>) -> &mut Self {
+        self.nb_dir_child = nb_dir_child;
         self
     }
 
-    fn ratio_dir(&mut self, ratio_dir: f32) -> &mut Self {
-        self.ratio_dir = ratio_dir;
+    fn nb_file_child(&mut self, nb_file_child: Range<u64>) -> &mut Self {
+        self.nb_file_child = nb_file_child;
         self
     }
 
@@ -176,8 +187,8 @@ impl ContextBuilder {
     fn create(self) -> Context {
         Context {
             dir_depth: self.dir_depth,
-            dir_child: self.dir_child,
-            ratio_dir: self.ratio_dir,
+            nb_dir_child: self.nb_dir_child,
+            nb_file_child: self.nb_file_child,
             binary_ratio: self.binary_ratio,
             file_len: self.file_len,
             rng: Rc::new(RefCell::new(SmallRng::seed_from_u64(self.seed))),
@@ -266,7 +277,10 @@ struct Cli {
     dir_depth: Option<Range<u64>>,
 
     #[arg(long, value_parser = parse_range_64)]
-    dir_child: Option<Range<u64>>,
+    nb_dir_child: Option<Range<u64>>,
+
+    #[arg(long, value_parser = parse_range_64)]
+    nb_file_child: Option<Range<u64>>,
 
     #[arg(long)]
     ratio_dir: Option<f32>,
@@ -283,12 +297,15 @@ fn main() -> Result<()> {
 
     let mut builder = ContextBuilder::new();
 
+    cli.seed.map(|v| builder.seed(v));
     cli.dir_depth.map(|v| builder.dir_depth(v));
-    cli.dir_child.map(|v| builder.dir_child(v));
-    cli.ratio_dir.map(|v| builder.ratio_dir(v));
+    cli.nb_dir_child.map(|v| builder.nb_dir_child(v));
+    cli.nb_file_child.map(|v| builder.nb_file_child(v));
     cli.binary_ratio.map(|v| builder.binary_ratio(v));
     cli.file_len.map(|v| builder.file_len(v));
 
     let context = builder.create();
+
+    println!("Generating with {context:?}");
     build_dir(&cli.out_dir, context)
 }
