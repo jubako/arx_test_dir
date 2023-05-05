@@ -391,10 +391,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a515f5799fe4961cb532f983ce2b23082366b898e52ffbce459c86f67c8378a"
 
 [[patch.unused]]
-name = "jubako"
-version = "0.2.0"
-
-[[patch.unused]]
 name = "arx"
 version = "0.2.0"
 
@@ -406,6 +402,10 @@ source = "git+https://github.com/cberner/fuser.git#39d4177e809c7ee3b6757136fee8a
 [[patch.unused]]
 name = "jbk-jim"
 version = "0.1.0"
+
+[[patch.unused]]
+name = "jubako"
+version = "0.2.0"
 
 [[patch.unused]]
 name = "jubako"
