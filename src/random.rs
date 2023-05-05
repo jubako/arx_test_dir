@@ -1,6 +1,7 @@
 use rand::distributions::Alphanumeric;
 use rand::prelude::*;
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::io::{Read, Result};
 use std::ops::{DerefMut, Range};
 use std::rc::Rc;
@@ -8,8 +9,8 @@ use std::rc::Rc;
 pub struct BinRead(SmallRng);
 
 impl BinRead {
-    fn new(rng: SmallRng) -> Self {
-        Self(rng)
+    pub fn new(seed: u64) -> Self {
+        Self(SmallRng::seed_from_u64(seed))
     }
 }
 
@@ -21,20 +22,34 @@ impl Read for BinRead {
     }
 }
 
-pub struct TextRead(SmallRng);
+pub struct TextRead {
+    rng: SmallRng,
+    cache: VecDeque<u8>,
+}
 
 impl TextRead {
-    fn new(rng: SmallRng) -> Self {
-        Self(rng)
+    pub fn new(seed: u64) -> Self {
+        //println!("generate reader with seed {}", seed);
+        Self {
+            rng: SmallRng::seed_from_u64(seed),
+            cache: VecDeque::new(),
+        }
     }
 }
 
 impl Read for TextRead {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         // let's say that means words len is height
-        let string = lipsum::lipsum_words_with_rng(&mut self.0, 1024);
-        let source_len = std::cmp::min(buf.len(), string.len());
-        buf[0..source_len].copy_from_slice(string[0..source_len].as_bytes());
+        if self.cache.is_empty() {
+            //  println!("Gen 1024 words");
+            for v in lipsum::lipsum_words_with_rng(&mut self.rng, 1024).as_bytes() {
+                self.cache.push_back(*v);
+            }
+        }
+        let source_len = std::cmp::min(buf.len(), self.cache.len());
+        buf[0..source_len].copy_from_slice(&self.cache.make_contiguous()[0..source_len]);
+        self.cache.drain(0..source_len);
+        //println!("Have feed {source_len}");
         Ok(source_len)
     }
 }
@@ -95,16 +110,11 @@ impl Context {
         }
     }
 
-    fn rng(&self) -> SmallRng {
-        SmallRng::seed_from_u64(self.rng.borrow_mut().gen())
-    }
-
-    pub fn binary_read(&self) -> BinRead {
-        BinRead::new(self.rng())
-    }
-
-    pub fn text_read(&self) -> TextRead {
-        TextRead::new(self.rng())
+    pub fn get<T>(&self) -> T
+    where
+        rand::distributions::Standard: rand::distributions::Distribution<T>,
+    {
+        self.rng.borrow_mut().gen()
     }
 }
 

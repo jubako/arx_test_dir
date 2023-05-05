@@ -1,21 +1,13 @@
+mod mount;
 mod random;
 mod tree;
 
-use random::{Context, ContextBuilder};
+use random::ContextBuilder;
 use std::io::Result;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use clap::Parser;
-
-fn build_dir(path: &Path, context: Context) -> Result<()> {
-    let dir = tree::DirEntry::new(path.into(), context);
-    let nb_files = dir.nb_files();
-    let size = dir.size();
-    println!("Generate {nb_files} files for a {size} bytes.");
-    dir.generate()?;
-    Ok(())
-}
 
 fn parse_range<T>(s: &str) -> std::result::Result<Range<T>, String>
 where
@@ -42,7 +34,11 @@ fn parse_range_usize(s: &str) -> std::result::Result<Range<usize>, String> {
 
 #[derive(Parser)]
 struct Cli {
-    out_dir: PathBuf,
+    #[arg(long)]
+    extract_dir: Option<PathBuf>,
+
+    #[arg(long)]
+    mount_dir: Option<PathBuf>,
 
     #[arg(long, short)]
     seed: Option<u64>,
@@ -81,5 +77,23 @@ fn main() -> Result<()> {
     let context = builder.create();
 
     println!("Generating with {context:?}");
-    build_dir(&cli.out_dir, context)
+
+    let (_, dir) = tree::DirEntry::new("".into(), 1, 1, context);
+    let nb_files = dir.nb_files();
+    let size = dir.size();
+    println!("Generate {nb_files} files for a {size} bytes.");
+
+    if let Some(path) = cli.extract_dir {
+        dir.generate(&path)?;
+    }
+
+    if let Some(path) = cli.mount_dir {
+        let options = vec![
+            fuser::MountOption::RO,
+            fuser::MountOption::FSName("test_arx".into()),
+        ];
+        fuser::mount2(mount::TreeFs::new(dir), path, &options)?;
+    }
+
+    Ok(())
 }

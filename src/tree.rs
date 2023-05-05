@@ -1,90 +1,162 @@
-use super::Context;
+use super::random::{BinRead, Context, TextRead};
 
-use std::cell::RefCell;
 use std::fs::create_dir;
 use std::io::{Read, Result};
-use std::ops::DerefMut;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-struct FileEntry {
-    path: PathBuf,
-    source: Box<RefCell<dyn Read>>,
+pub enum EntryRef<'a> {
+    File(&'a FileEntry),
+    Dir(&'a DirEntry),
+}
+
+pub struct FileEntry {
+    pub name: PathBuf,
+    pub ino: u64,
+    pub parent_ino: u64,
+    seed: u64,
+    is_binary: bool,
     size: usize,
 }
 
 impl FileEntry {
-    fn new(path: PathBuf, source: Box<RefCell<dyn Read>>, size: usize) -> Self {
-        Self { path, source, size }
+    fn new(
+        name: PathBuf,
+        ino: u64,
+        parent_ino: u64,
+        seed: u64,
+        is_binary: bool,
+        size: usize,
+    ) -> Self {
+        Self {
+            ino,
+            parent_ino,
+            name,
+            seed,
+            is_binary,
+            size,
+        }
     }
 
-    fn generate(&self) -> Result<()> {
+    pub fn get_reader(&self) -> Box<dyn Read> {
+        if self.is_binary {
+            Box::new(BinRead::new(self.seed).take(self.size as u64))
+        } else {
+            Box::new(TextRead::new(self.seed).take(self.size as u64))
+        }
+    }
+
+    fn generate(&self, dir: &Path) -> Result<()> {
+        let path = dir.join(&self.name);
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&self.path)?;
-        std::io::copy(
-            &mut self.source.borrow_mut().deref_mut().take(self.size as u64),
-            &mut file,
-        )?;
+            .open(path)?;
+        //println!("Generate files with {} bytes", self.size);
+        std::io::copy(&mut self.get_reader(), &mut file)?;
         Ok(())
     }
 
     fn size(&self) -> usize {
         self.size
     }
+
+    fn get_entry(&self, ino: u64) -> std::result::Result<EntryRef, ()> {
+        if ino == self.ino {
+            Ok(EntryRef::File(self))
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn get_attr(&self) -> fuser::FileAttr {
+        fuser::FileAttr {
+            ino: self.ino,
+            size: self.size as u64,
+            kind: fuser::FileType::RegularFile,
+            blocks: 1,
+            atime: std::time::UNIX_EPOCH,
+            mtime: std::time::UNIX_EPOCH,
+            ctime: std::time::UNIX_EPOCH,
+            crtime: std::time::UNIX_EPOCH,
+            perm: 0o555,
+            nlink: 2,
+            uid: 1000,
+            gid: 1000,
+            rdev: 0,
+            blksize: 0,
+            flags: 0,
+        }
+    }
 }
 
 pub struct DirEntry {
-    path: PathBuf,
+    pub name: PathBuf,
+    pub ino: u64,
+    pub parent_ino: u64,
     files: Vec<FileEntry>,
     dirs: Vec<DirEntry>,
 }
 
 impl DirEntry {
-    pub(crate) fn new(mut path: PathBuf, context: Context) -> Self {
+    pub(crate) fn new(name: PathBuf, ino: u64, parent_ino: u64, context: Context) -> (u64, Self) {
+        let mut current_ino = ino;
         let (nb_files, nb_dir) = context.nb_child();
         let dirs = (0..nb_dir)
             .map(|_| {
                 let child_name: PathBuf = context.name().into();
-                path.push(child_name);
-                let d = DirEntry::new(path.clone(), context.descent());
-                path.pop();
+                let (last_ino, d) =
+                    DirEntry::new(child_name, current_ino + 1, ino, context.descent());
+                current_ino = last_ino;
                 d
             })
             .collect();
         let files = (0..nb_files)
             .map(|_| {
-                let child_name: PathBuf = context.name().into();
-                path.push(child_name);
-                let f = if context.is_binary() {
-                    path.set_extension("bin");
+                let mut child_name: PathBuf = context.name().into();
+                current_ino += 1;
+                if context.is_binary() {
+                    child_name.set_extension("bin");
                     FileEntry::new(
-                        path.clone(),
-                        Box::new(RefCell::new(context.binary_read())),
+                        child_name,
+                        current_ino,
+                        ino,
+                        context.get(),
+                        true,
                         context.file_len(),
                     )
                 } else {
-                    path.set_extension("text");
+                    child_name.set_extension("text");
                     FileEntry::new(
-                        path.clone(),
-                        Box::new(RefCell::new(context.text_read())),
+                        child_name,
+                        current_ino,
+                        ino,
+                        context.get(),
+                        false,
                         context.text_len(),
                     )
-                };
-                path.pop();
-                f
+                }
             })
             .collect();
-        Self { path, files, dirs }
+        (
+            current_ino,
+            Self {
+                name,
+                ino,
+                parent_ino,
+                files,
+                dirs,
+            },
+        )
     }
 
-    pub fn generate(&self) -> Result<()> {
-        create_dir(&self.path)?;
+    pub fn generate(&self, dir: &Path) -> Result<()> {
+        let path = dir.join(&self.name);
+        create_dir(&path)?;
         for dir in &self.dirs {
-            dir.generate()?;
+            dir.generate(&path)?;
         }
         for file in &self.files {
-            file.generate()?;
+            file.generate(&path)?;
         }
         Ok(())
     }
@@ -98,5 +170,70 @@ impl DirEntry {
         let file_size = self.files.iter().map(|f| f.size()).sum::<usize>();
         let dir_size = self.dirs.iter().map(|d| d.size()).sum::<usize>();
         file_size + dir_size
+    }
+
+    pub fn get_entry(&self, ino: u64) -> std::result::Result<EntryRef, ()> {
+        if ino == self.ino {
+            Ok(EntryRef::Dir(self))
+        } else {
+            for file in &self.files {
+                if let Ok(r) = file.get_entry(ino) {
+                    return Ok(r);
+                }
+            }
+            for dir in &self.dirs {
+                if let Ok(r) = dir.get_entry(ino) {
+                    return Ok(r);
+                }
+            }
+            Err(())
+        }
+    }
+
+    pub fn get_child(&self, name: &Path) -> std::result::Result<EntryRef, ()> {
+        for file in &self.files {
+            if file.name == name {
+                return Ok(EntryRef::File(file));
+            }
+        }
+        for dir in &self.dirs {
+            if dir.name == name {
+                return Ok(EntryRef::Dir(dir));
+            }
+        }
+        Err(())
+    }
+
+    pub fn get_child_idx(&self, mut idx: usize) -> std::result::Result<EntryRef, ()> {
+        if idx < self.files.len() {
+            return Ok(EntryRef::File(&self.files[idx]));
+        } else {
+            idx -= self.files.len();
+            return Ok(EntryRef::Dir(&self.dirs[idx]));
+        }
+    }
+
+    pub fn get_nb_children(&self) -> usize {
+        self.files.len() + self.dirs.len()
+    }
+
+    pub fn get_attr(&self) -> fuser::FileAttr {
+        fuser::FileAttr {
+            ino: self.ino,
+            size: 0,
+            kind: fuser::FileType::Directory,
+            blocks: 1,
+            atime: std::time::UNIX_EPOCH,
+            mtime: std::time::UNIX_EPOCH,
+            ctime: std::time::UNIX_EPOCH,
+            crtime: std::time::UNIX_EPOCH,
+            perm: 0o555,
+            nlink: 2,
+            uid: 1000,
+            gid: 1000,
+            rdev: 0,
+            blksize: 0,
+            flags: 0,
+        }
     }
 }
