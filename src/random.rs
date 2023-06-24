@@ -180,3 +180,9 @@ impl ContextBuilder {
         }
     }
 }
+
+impl Default for ContextBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
