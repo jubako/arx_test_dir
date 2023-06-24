@@ -4,6 +4,17 @@ use std::fs::create_dir;
 use std::io::{Read, Result};
 use std::path::{Path, PathBuf};
 
+#[derive(Debug)]
+pub struct NoEntry;
+
+impl std::fmt::Display for NoEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "No entry found")
+    }
+}
+
+impl std::error::Error for NoEntry {}
+
 pub enum EntryRef<'a> {
     File(&'a FileEntry),
     Dir(&'a DirEntry),
@@ -60,11 +71,11 @@ impl FileEntry {
         self.size
     }
 
-    fn get_entry(&self, ino: u64) -> std::result::Result<EntryRef, ()> {
+    fn get_entry(&self, ino: u64) -> std::result::Result<EntryRef, NoEntry> {
         if ino == self.ino {
             Ok(EntryRef::File(self))
         } else {
-            Err(())
+            Err(NoEntry)
         }
     }
 
@@ -172,7 +183,7 @@ impl DirEntry {
         file_size + dir_size
     }
 
-    pub fn get_entry(&self, ino: u64) -> std::result::Result<EntryRef, ()> {
+    pub fn get_entry(&self, ino: u64) -> std::result::Result<EntryRef, NoEntry> {
         if ino == self.ino {
             Ok(EntryRef::Dir(self))
         } else {
@@ -186,11 +197,11 @@ impl DirEntry {
                     return Ok(r);
                 }
             }
-            Err(())
+            Err(NoEntry)
         }
     }
 
-    pub fn get_child(&self, name: &Path) -> std::result::Result<EntryRef, ()> {
+    pub fn get_child(&self, name: &Path) -> std::result::Result<EntryRef, NoEntry> {
         for file in &self.files {
             if file.name == name {
                 return Ok(EntryRef::File(file));
@@ -201,15 +212,19 @@ impl DirEntry {
                 return Ok(EntryRef::Dir(dir));
             }
         }
-        Err(())
+        Err(NoEntry)
     }
 
-    pub fn get_child_idx(&self, mut idx: usize) -> std::result::Result<EntryRef, ()> {
+    pub fn get_child_idx(&self, mut idx: usize) -> std::result::Result<EntryRef, NoEntry> {
         if idx < self.files.len() {
-            return Ok(EntryRef::File(&self.files[idx]));
+            Ok(EntryRef::File(&self.files[idx]))
         } else {
             idx -= self.files.len();
-            return Ok(EntryRef::Dir(&self.dirs[idx]));
+            if idx < self.dirs.len() {
+                Ok(EntryRef::Dir(&self.dirs[idx]))
+            } else {
+                Err(NoEntry)
+            }
         }
     }
 

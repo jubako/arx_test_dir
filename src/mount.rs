@@ -40,11 +40,11 @@ impl fuser::Filesystem for TreeFs {
                                 reply.entry(&TTL, &d.get_attr(), 0)
                             }
                         },
-                        Err(()) => reply.error(libc::ENOENT),
+                        Err(_) => reply.error(libc::ENOENT),
                     }
                 }
             },
-            Err(()) => reply.error(libc::ENOENT),
+            Err(_) => reply.error(libc::ENOENT),
         }
     }
 
