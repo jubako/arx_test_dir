@@ -13,6 +13,15 @@ impl TreeFs {
     pub fn new(root: DirEntry) -> Self {
         Self { root }
     }
+
+    pub fn spawn(self, path: &Path) -> std::io::Result<fuser::BackgroundSession> {
+        let options = vec![
+            fuser::MountOption::RO,
+            fuser::MountOption::FSName("test_arx".into()),
+        ];
+        fuser::spawn_mount2(self, path, &options)
+    }
+
 }
 
 impl fuser::Filesystem for TreeFs {
