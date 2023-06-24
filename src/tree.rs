@@ -109,6 +109,10 @@ pub struct DirEntry {
 }
 
 impl DirEntry {
+    pub fn new_root(context: Context) -> Self {
+        let (_, s) = Self::new("".into(), 1, 1, context);
+        s
+    }
     pub(crate) fn new(name: PathBuf, ino: u64, parent_ino: u64, context: Context) -> (u64, Self) {
         let mut current_ino = ino;
         let (nb_files, nb_dir) = context.nb_child();
