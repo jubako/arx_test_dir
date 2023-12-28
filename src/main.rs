@@ -37,6 +37,7 @@ struct Cli {
     #[arg(long)]
     extract_dir: Option<PathBuf>,
 
+    #[cfg(not(windows))]
     #[arg(long)]
     mount_dir: Option<PathBuf>,
 
@@ -87,6 +88,7 @@ fn main() -> Result<()> {
         dir.generate(&path)?;
     }
 
+    #[cfg(not(windows))]
     if let Some(path) = cli.mount_dir {
         let options = vec![
             fuser::MountOption::RO,
