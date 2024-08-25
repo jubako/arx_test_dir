@@ -503,19 +503,3 @@ dependencies = [
  "quote",
  "syn 1.0.109",
 ]
-
-[[patch.unused]]
-name = "arx"
-version = "0.2.0"
-
-[[patch.unused]]
-name = "jbk-jim"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "jubako"
-version = "0.2.0"
-
-[[patch.unused]]
-name = "jubako"
-version = "0.2.0"

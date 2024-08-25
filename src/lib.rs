@@ -1,12 +1,12 @@
-#[cfg(not(windows))]
+#[cfg(feature = "fuse")]
 mod mount;
 mod random;
 mod tree;
 
-#[cfg(not(windows))]
+#[cfg(feature = "fuse")]
 pub use mount::TreeFs;
 pub use random::ContextBuilder;
 pub use tree::DirEntry;
 
-#[cfg(not(windows))]
+#[cfg(feature = "fuse")]
 pub use fuser::BackgroundSession;
