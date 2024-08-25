@@ -79,7 +79,7 @@ impl FileEntry {
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(feature = "fuse")]
     pub fn get_attr(&self) -> fuser::FileAttr {
         fuser::FileAttr {
             ino: self.ino,
@@ -237,7 +237,7 @@ impl DirEntry {
         self.files.len() + self.dirs.len()
     }
 
-    #[cfg(not(windows))]
+    #[cfg(feature = "fuse")]
     pub fn get_attr(&self) -> fuser::FileAttr {
         fuser::FileAttr {
             ino: self.ino,
